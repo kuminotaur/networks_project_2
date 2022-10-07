@@ -91,21 +91,29 @@ def tunnel(from_socket, to_socket):
 def proxy(client_socket,client_IP):
 	global LOG_FLAG
 	try:
-		c_rq = client_socket.recv(BUFFER_SIZE)
-		rq_data = modify_headers(c_rq.decode())
-		s_i = parse_server_info(rq_data)
-		with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as emerald:
-			if s_i[1] == 443:
-				emerald = ssl.wrap_socket(emerald)
-			emerald.connect((s_i[0], s_i[1]))
-			print(time.strftime("%e %b %H:%M:%S", time.localtime()) + ' - >>> ' + rq_data.partition('\n')[0])
-			emerald.send(str.encode(rq_data))
-			tunnel(emerald, client_socket)
-			if LOG_FLAG:
-				create_log(s_i[0], c_rq, rq_data, emerald.recv(BUFFER_SIZE))
-		
+		c_rq = client_socket.recv(BUFFER_SIZE) # receive get request from client
 	except:
-		print('Server socket not connected')
+		print('Client socket not connected')
+	else:
+		rq_data = modify_headers(c_rq.decode()) # modify header to remove keep-alive and change HTTP version to 1.0
+		s_i = parse_server_info(rq_data) # parses info about the server to be requested the get request
+		with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as emerald: # creates new socket to communicate to the server with
+			try:
+				if s_i[1] == 443:
+					emerald = ssl.wrap_socket(emerald, ssl_version=ssl.PROTOCOL_TLSv1_2)
+				print(time.strftime("%e %b %H:%M:%S", time.localtime()) + ' - >>> ' + s_i[2]) # prints time and hostname to attempt connection to
+				emerald.connect((s_i[0], s_i[1]))
+			except socket.error as e:
+				if LOG_FLAG: create_log2(s_i[2], c_rq.decode(), 'HTTP/1.1 502 Bad Gateway\r\n\r\n') # logs bad gateway connection attempt
+				emerald.close() # closes server socket
+				client_socket.close() # closes client socket
+			else:
+				if LOG_FLAG: create_log2(s_i[2], c_rq.decode(), 'HTTP/1.1 200 OK\r\n\r\n') # logs ok connection attempt
+				emerald.sendall(str.encode(rq_data)) # sends request to server
+				tunnel(emerald, client_socket) # tunnels data from server to client
+				if LOG_FLAG: create_log(s_i[2], c_rq.decode(), rq_data, emerald.recv(BUFFER_SIZE)) # logs server response
+				emerald.close() # closes server socket
+				client_socket.close() # closes client socket
 
 
 def main():
@@ -131,7 +139,7 @@ def main():
 	# bind with the port number given and allow connections
 	print ("HTTP proxy listening on port ",sys.argv[1])
 	proxy_socket.bind(('', int(sys.argv[1])))
-	proxy_socket.listen(50) #allow connections  
+	proxy_socket.listen(50) #allow connections 
 
 	try: 
 		while True:
